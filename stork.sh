@@ -110,8 +110,6 @@ function deploy_stork_node() {
 
 # 日志监控函数
 function monitor_logs() {
-    echo "正在配置日志监控..."
-
     MONITOR_SCRIPT="/root/stork/monitor.sh"
     SCREEN_NAME="stork"
     LOG_FILE="/root/stork/output.log"
@@ -122,6 +120,7 @@ function monitor_logs() {
 echo "日志监控已启动..." > $MONITOR_LOG
 
 while true; do
+    # 检查日志文件中是否有 Network error
     if grep -q "Network error" "$LOG_FILE"; then
         echo "\$(date): 检测到 Network error，正在重启服务..." >> $MONITOR_LOG
 
@@ -137,6 +136,22 @@ while true; do
         
         echo "\$(date): 服务已重启" >> $MONITOR_LOG
     fi
+
+    # 检查日志文件中是否有邮箱地址
+    if grep -q -o "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}" "$LOG_FILE"; then
+        # 获取一轮所有邮箱地址，处理完一轮后清理日志
+        emails=$(grep -o "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6}" "$LOG_FILE" | sort | uniq)
+
+        # 输出所有邮箱
+        echo "$(date): 检测到邮箱地址：$emails" >> $MONITOR_LOG
+
+        # 清理日志文件
+        > "$LOG_FILE"
+
+        echo "$(date): 已清理日志文件" >> $MONITOR_LOG
+    fi
+
+    # 每30秒检查一次日志文件
     sleep 30
 done
 EOL
