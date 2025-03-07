@@ -103,19 +103,19 @@ function deploy_stork_node() {
     npm install
 
     # 启动项目，并将输出重定向到日志文件
-    screen -S stork -dm bash -c "cd ~/stork && npm start >> /root/stork/logs/output.log 2>&1"
+    screen -S stork -dm bash -c "cd ~/stork && npm start >> ~/stork/output.log 2>&1"
 
-    echo "项目已启动，使用 'screen -r stork' 查看日志"
+    echo "项目已启动，使用 'screen -r stork' 查看日志 或者打开 output.log"
 }
 
 # 日志监控函数
 function monitor_logs() {
     echo "正在配置日志监控..."
 
-    MONITOR_SCRIPT="/root/monitor.sh"
+    MONITOR_SCRIPT="/root/stork/monitor.sh"
     SCREEN_NAME="stork"
-    LOG_FILE="/root/stork/logs/output.log"
-    MONITOR_LOG="/root/monitor.log"
+    LOG_FILE="/root/stork/output.log"
+    MONITOR_LOG="/root/stork/monitor.log"
 
     cat > "$MONITOR_SCRIPT" <<EOL
 #!/bin/bash
