@@ -123,60 +123,80 @@ function deploy_stork_node() {
 
     # 让用户输入代理地址
     echo "请输入代理地址（格式如 http://代理账号:代理密码@127.0.0.1:8080），每次输入一个，直接按回车结束输入："
-    > "stork/proxy.txt"  # 清空或创建 proxy.txt 文件
+    > "stork/proxy.txt"  # 清空或创建 proxies.txt 文件
     while true; do
         read -p "代理地址（回车结束）：" proxy
         if [ -z "$proxy" ]; then
             break  # 如果用户直接按回车，结束输入
         fi
-        echo "$proxy" >> "stork/proxy.txt"  # 将代理地址写入 proxy.txt
+        echo "$proxy" >> "stork/proxies.txt"  # 将代理地址写入 proxies.txt
     done
 
-    # 检查 wallets.json 是否存在，并提示是否覆盖
+    # 检查 accounts.js 是否存在，并提示是否覆盖
     echo "检查钱包配置文件..."
     overwrite="no"
-    if [ -f "stork/wallets.json" ]; then
-        read -p "wallets.json 已存在，是否要重新输入钱包信息？(y/n) " overwrite
+    if [ -f "stork/accounts.js" ]; then
+        read -p "accounts.js 已存在，是否要重新输入钱包信息？(y/n) " overwrite
         if [[ "$overwrite" =~ ^[Yy]$ ]]; then
-            rm -f "stork/wallets.json"
+            rm -f "stork/accounts.js"
             echo "已清除旧的钱包信息，请重新输入。"
         else
-            echo "使用现有的 wallets.json 文件。"
+            echo "使用现有的 accounts.json 文件。"
         fi
     fi
 
-    # 输入钱包信息（如果需要）
-    if [ ! -f "stork/wallets.json" ] || [[ "$overwrite" =~ ^[Yy]$ ]]; then
-        > "stork/wallets.json"  # 创建或清空文件
-        echo "请输入钱包信息，格式必须为：钱包地址,私钥"
-        echo "每次输入一个钱包，直接按回车结束输入："
-        echo "[" > "stork/wallets.json"  # 开始 JSON 数组
-        while true; do
-            read -p "钱包地址：" wallet_address
-            if [ -z "$wallet_address" ]; then
-                if [ -s "stork/wallets.json" ]; then
-                    echo "]" >> "stork/wallets.json"  # 结束 JSON 数组
-                    break  # 如果 wallets.json 不为空，允许结束
-                else
-                    echo "钱包地址不能为空，请重新输入！"
-                    continue
-                fi
-            fi
+    # 检查 accounts.js 是否存在，并提示是否覆盖
+echo "检查账户配置文件..."
+overwrite="no"
+if [ -f "stork/accounts.js" ]; then
+    read -p "accounts.js 已存在，是否要重新输入账户信息？(y/n) " overwrite
+    if [[ "$overwrite" =~ ^[Yy]$ ]]; then
+        rm -f "stork/accounts.js"
+        echo "已清除旧的账户信息，请重新输入。"
+    else
+        echo "使用现有的 accounts.js 文件。"
+    fi
+fi
 
-            read -p "私钥：" private_key
-            if [ -z "$private_key" ]; then
-                echo "私钥不能为空，请重新输入！"
+# 输入账户信息（如果需要）
+if [ ! -f "stork/accounts.js" ] || [[ "$overwrite" =~ ^[Yy]$ ]]; then
+    > "stork/accounts.js"  # 创建或清空文件
+    echo "export const accounts = [" > "stork/accounts.js"  # 开始 JavaScript 数组
+    echo "请输入账户信息，格式必须为：邮箱,密码"
+    echo "每次输入一个账户，直接按回车结束输入："
+
+    first_entry=true
+
+    while true; do
+        read -p "邮箱：" username
+        if [ -z "$username" ]; then
+            if [ "$first_entry" = false ]; then
+                echo "]" >> "stork/accounts.js"  # 结束数组
+                break
+            else
+                echo "邮箱不能为空，请重新输入！"
                 continue
             fi
+        fi
 
-            # 将钱包信息写入 wallets.json
-            if [ "$(wc -l < "stork/wallets.json")" -gt 1 ]; then
-                echo ",{\"address\": \"$wallet_address\", \"privateKey\": \"$private_key\"}" >> "stork/wallets.json"
-            else
-                echo "{\"address\": \"$wallet_address\", \"privateKey\": \"$private_key\"}" >> "stork/wallets.json"
-            fi
-            echo "钱包信息已保存。"
-        done
+        read -p "密码：" password
+        if [ -z "$password" ]; then
+            echo "密码不能为空，请重新输入！"
+            continue
+        fi
+
+        # 将账户信息写入 accounts.js
+        if [ "$first_entry" = true ]; then
+            echo "  { username: \"$username\", password: \"$password\" }" >> "stork/accounts.js"
+            first_entry=false
+        else
+            echo "  ,{ username: \"$username\", password: \"$password\" }" >> "stork/accounts.js"
+        fi
+
+        echo "账户信息已保存。"
+    done
+    echo "];" >> "stork/accounts.js"  # 结束 JavaScript 数组
+    echo "账户信息录入完成！"
     fi
 
     # 进入目录
@@ -200,7 +220,7 @@ function deploy_stork_node() {
     fi
 
     # 提示用户操作完成
-    echo "操作完成！代理已保存到 proxy.txt，钱包已保存到 wallets.json，依赖已安装。"
+    echo "操作完成！代理已保存到 proxies.txt，钱包已保存到 accounts.js，依赖已安装。"
 
     # 启动项目
     echo "正在启动项目..."
