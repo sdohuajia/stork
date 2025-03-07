@@ -106,6 +106,10 @@ function deploy_stork_node() {
     screen -S stork -dm bash -c "cd ~/stork && npm start >> ~/stork/output.log 2>&1"
 
     echo "项目已启动，使用 'screen -r stork' 查看日志 或者打开 output.log"
+
+    # 提示用户按任意键返回主菜单
+    read -n 1 -s -r -p "按任意键返回主菜单..."
+    main_menu
 }
 
 # 日志监控函数
@@ -161,6 +165,10 @@ EOL
 
     echo "日志监控已启动，后台运行中。"
     echo "查看监控日志：tail -f $MONITOR_LOG"
+
+    # 提示用户按任意键返回主菜单
+    read -n 1 -s -r -p "按任意键返回主菜单..."
+    main_menu
 }
 
 # 启动主菜单
