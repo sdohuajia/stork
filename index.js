@@ -380,6 +380,88 @@ if (!isMainThread) {
 } else {
   let previousStats = { validCount: 0, invalidCount: 0 };
 
+  // 运行验证进程
+  async function runValidationProcess(tokenManager, accountConfig) {
+    try {
+      log(`--------- 开始验证进程 (${accountConfig.cognito.username}) ---------`);
+      const tokens = await getTokens(accountConfig);
+      
+      // 清理之前的统计数据以释放内存
+      if (global.gc) {
+        global.gc();
+      }
+      
+      const signedPrices = await getSignedPrices(accountConfig, tokens);
+      const proxies = loadProxies(accountConfig);
+
+      if (!signedPrices || signedPrices.length === 0) {
+        log(`账号 ${accountConfig.cognito.username} 没有数据需要验证`);
+        const userData = await getUserStats(accountConfig, tokens);
+        displayStats(userData, accountConfig);
+        return;
+      }
+
+      log(`账号 ${accountConfig.cognito.username} 使用 ${accountConfig.threads.maxWorkers} 个工作线程处理 ${signedPrices.length} 个数据点...`);
+      const workers = [];
+
+      // 优化批处理逻辑，减少内存占用
+      for (let i = 0; i < signedPrices.length; i++) {
+        const priceData = signedPrices[i];
+        const proxy = proxies.length > 0 ? proxies[i % proxies.length] : null;
+
+        workers.push(new Promise((resolve) => {
+          const worker = new Worker(new URL(import.meta.url), {
+            workerData: { 
+              priceData, 
+              tokens: { accessToken: tokens.accessToken }, // 只传递必要的token信息
+              proxy, 
+              config: {
+                stork: {
+                  baseURL: accountConfig.stork.baseURL,
+                  origin: accountConfig.stork.origin,
+                  userAgent: accountConfig.stork.userAgent
+                }
+              } // 只传递必要的配置信息
+            }
+          });
+          worker.on('message', (result) => {
+            worker.terminate(); // 及时终止工作线程
+            resolve(result);
+          });
+          worker.on('error', (error) => {
+            worker.terminate();
+            resolve({ success: false, error: error.message });
+          });
+          worker.on('exit', () => {
+            resolve({ success: false, error: 'Worker 已退出' });
+          });
+        }));
+
+        // 每处理一定数量的数据就等待完成，避免同时创建太多worker
+        if (workers.length >= accountConfig.threads.maxWorkers) {
+          await Promise.all(workers);
+          workers.length = 0;
+        }
+      }
+
+      // 处理剩余的worker
+      if (workers.length > 0) {
+        await Promise.all(workers);
+      }
+
+      // 更新统计信息
+      const updatedUserData = await getUserStats(accountConfig, tokens);
+      displayStats(updatedUserData, accountConfig);
+      
+      // 清理内存
+      if (global.gc) {
+        global.gc();
+      }
+    } catch (error) {
+      log(`账号 ${accountConfig.cognito.username} 验证进程停止: ${error.message}`, 'ERROR');
+    }
+  }
+
   async function runValidationProcess(tokenManager) {
     try {
       log('--------- 开始验证流程 ---------');
