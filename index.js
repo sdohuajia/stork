@@ -100,6 +100,100 @@ function log(message, type = '信息') {
   console.log(`[${getFormattedDate()}] [${type}] ${message}`);
 }
 
+// 清理之前的统计数据
+function clearPreviousStats() {
+  previousStats = { validCount: 0, invalidCount: 0 };
+  log('已清理之前的统计数据');
+}
+
+async function runValidationProcess(tokenManager) {
+  try {
+    log('--------- 开始验证流程 ---------');
+    const tokens = await getTokens();
+    const initialUserData = await getUserStats(tokens);
+
+    if (!initialUserData || !initialUserData.stats) {
+      throw new Error('无法获取初始用户统计');
+    }
+
+    const initialValidCount = initialUserData.stats.stork_signed_prices_valid_count || 0;
+    const initialInvalidCount = initialUserData.stats.stork_signed_prices_invalid_count || 0;
+
+    if (previousStats.validCount === 0 && previousStats.invalidCount === 0) {
+      previousStats.validCount = initialValidCount;
+      previousStats.invalidCount = initialInvalidCount;
+    }
+
+    const signedPrices = await getSignedPrices(tokens);
+    const proxies = await loadProxies();
+
+    if (!signedPrices || signedPrices.length === 0) {
+      log('没有需要验证的数据');
+      const userData = await getUserStats(tokens);
+      displayStats(userData);
+      return;
+    }
+
+    log(`使用 ${config.threads.maxWorkers} 个工作线程处理 ${signedPrices.length} 个数据点...`);
+    const workers = [];
+
+    const chunkSize = Math.ceil(signedPrices.length / config.threads.maxWorkers);
+    const batches = [];
+    for (let i = 0; i < signedPrices.length; i += chunkSize) {
+      batches.push(signedPrices.slice(i, i + chunkSize));
+    }
+
+    for (let i = 0; i < Math.min(batches.length, config.threads.maxWorkers); i++) {
+      const batch = batches[i];
+      const proxy = proxies.length > 0 ? proxies[i % proxies.length] : null;
+
+      batch.forEach(priceData => {
+        workers.push(new Promise((resolve) => {
+          const worker = new Worker(__filename, {
+            workerData: { priceData, tokens, proxy }
+          });
+          worker.on('message', resolve);
+          worker.on('error', (error) => resolve({ success: false, error: error.message }));
+          worker.on('exit', () => resolve({ success: false, error: '工作线程退出' }));
+        }));
+      });
+    }
+
+    const results = await Promise.all(workers);
+    const successCount = results.filter(r => r.success).length;
+    log(`成功验证 ${successCount}/${results.length} 个数据`);
+
+    const updatedUserData = await getUserStats(tokens);
+    const newValidCount = updatedUserData.stats.stork_signed_prices_valid_count || 0;
+    const newInvalidCount = updatedUserData.stats.stork_signed_prices_invalid_count || 0;
+
+    const actualValidIncrease = newValidCount - previousStats.validCount;
+    const actualInvalidIncrease = newInvalidCount - previousStats.invalidCount;
+
+    previousStats.validCount = newValidCount;
+    previousStats.invalidCount = newInvalidCount;
+
+    displayStats(updatedUserData);
+    log(`--------- 验证摘要 ---------`);
+    log(`总处理数据: ${newValidCount}`);
+    log(`成功: ${actualValidIncrease}`);
+    log(`失败: ${actualInvalidIncrease}`);
+    log('--------- 完成 ---------');
+
+    // 清理之前的统计数据
+    clearPreviousStats();
+
+    if (jobs < accounts.length) {
+      setTimeout(() => main(), config.stork.intervalSeconds * 1000);
+    } else if (jobs == accounts.length - 1 || jobs === accounts.length) {
+      jobs = 0;
+      setTimeout(() => main(), config.stork.intervalSeconds * 1000);
+    }
+  } catch (error) {
+    log(`验证过程已停止: ${error.message}`, '错误');
+  }
+}
+
 function loadProxies() {
   try {
     const rotate = arr => {
