@@ -1,4 +1,3 @@
-
 import AmazonCognitoIdentity from 'amazon-cognito-identity-js';
 import axios from 'axios';
 import fs from 'fs';
@@ -6,26 +5,25 @@ import path from 'path';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
-import { accounts } from "./accounts.js"
+import { accounts } from "./accounts.js";
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 从config.json加载配置
+// 加载配置文件 config.json
 function loadConfig() {
   try {
     const configPath = path.join(__dirname, 'config.json');
 
     if (!fs.existsSync(configPath)) {
-      log(`在 ${configPath} 未找到配置文件，使用默认配置`, '警告');
-      // 创建默认配置文件
+      log(`配置文件未在 ${configPath} 找到，使用默认配置`, 'WARN');
       const defaultConfig = {
         cognito: {
           region: 'ap-northeast-1',
           clientId: '5msns4n49hmg3dftp2tp1t2iuh',
           userPoolId: 'ap-northeast-1_M22I44OpC',
-          },
+        },
         stork: {
           intervalSeconds: 30
         },
@@ -38,12 +36,12 @@ function loadConfig() {
     }
     
     const userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    log('成功从 config.json 加载配置\n');
+    log('成功从 config.json 加载配置 \n');
     log('成功从 accounts.js 加载账户');
     return userConfig;
   } catch (error) {
-    log(`加载配置错误: ${error.message}`, '错误');
-    throw new Error('配置加载失败');
+    log(`加载配置出错: ${error.message}`, 'ERROR');
+    throw new Error('加载配置失败');
   }
 }
 
@@ -72,11 +70,11 @@ const config = {
 
 function validateConfig() {
   if (!accounts[0].username || !accounts[0].password) {
-    log('错误: 必须在accounts.js中设置用户名和密码', '错误');
-    console.log('\n请更新您的accounts.js文件：');
+    log('错误: 用户名和密码必须在 accounts.js 中设置', 'ERROR');
+    console.log('\n请更新你的 accounts.js 文件，填写你的凭据:');
     console.log(JSON.stringify({
-        username: "您的邮箱",
-        password: "您的密码"
+        username: "你的邮箱",
+        password: "你的密码"
     }, null, 2));
     return false;
   }
@@ -96,102 +94,8 @@ function getFormattedDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 }
 
-function log(message, type = '信息') {
+function log(message, type = 'INFO') {
   console.log(`[${getFormattedDate()}] [${type}] ${message}`);
-}
-
-// 清理之前的统计数据
-function clearPreviousStats() {
-  previousStats = { validCount: 0, invalidCount: 0 };
-  log('已清理之前的统计数据');
-}
-
-async function runValidationProcess(tokenManager) {
-  try {
-    log('--------- 开始验证流程 ---------');
-    const tokens = await getTokens();
-    const initialUserData = await getUserStats(tokens);
-
-    if (!initialUserData || !initialUserData.stats) {
-      throw new Error('无法获取初始用户统计');
-    }
-
-    const initialValidCount = initialUserData.stats.stork_signed_prices_valid_count || 0;
-    const initialInvalidCount = initialUserData.stats.stork_signed_prices_invalid_count || 0;
-
-    if (previousStats.validCount === 0 && previousStats.invalidCount === 0) {
-      previousStats.validCount = initialValidCount;
-      previousStats.invalidCount = initialInvalidCount;
-    }
-
-    const signedPrices = await getSignedPrices(tokens);
-    const proxies = await loadProxies();
-
-    if (!signedPrices || signedPrices.length === 0) {
-      log('没有需要验证的数据');
-      const userData = await getUserStats(tokens);
-      displayStats(userData);
-      return;
-    }
-
-    log(`使用 ${config.threads.maxWorkers} 个工作线程处理 ${signedPrices.length} 个数据点...`);
-    const workers = [];
-
-    const chunkSize = Math.ceil(signedPrices.length / config.threads.maxWorkers);
-    const batches = [];
-    for (let i = 0; i < signedPrices.length; i += chunkSize) {
-      batches.push(signedPrices.slice(i, i + chunkSize));
-    }
-
-    for (let i = 0; i < Math.min(batches.length, config.threads.maxWorkers); i++) {
-      const batch = batches[i];
-      const proxy = proxies.length > 0 ? proxies[i % proxies.length] : null;
-
-      batch.forEach(priceData => {
-        workers.push(new Promise((resolve) => {
-          const worker = new Worker(__filename, {
-            workerData: { priceData, tokens, proxy }
-          });
-          worker.on('message', resolve);
-          worker.on('error', (error) => resolve({ success: false, error: error.message }));
-          worker.on('exit', () => resolve({ success: false, error: '工作线程退出' }));
-        }));
-      });
-    }
-
-    const results = await Promise.all(workers);
-    const successCount = results.filter(r => r.success).length;
-    log(`成功验证 ${successCount}/${results.length} 个数据`);
-
-    const updatedUserData = await getUserStats(tokens);
-    const newValidCount = updatedUserData.stats.stork_signed_prices_valid_count || 0;
-    const newInvalidCount = updatedUserData.stats.stork_signed_prices_invalid_count || 0;
-
-    const actualValidIncrease = newValidCount - previousStats.validCount;
-    const actualInvalidIncrease = newInvalidCount - previousStats.invalidCount;
-
-    previousStats.validCount = newValidCount;
-    previousStats.invalidCount = newInvalidCount;
-
-    displayStats(updatedUserData);
-    log(`--------- 验证摘要 ---------`);
-    log(`总处理数据: ${newValidCount}`);
-    log(`成功: ${actualValidIncrease}`);
-    log(`失败: ${actualInvalidIncrease}`);
-    log('--------- 完成 ---------');
-
-    // 清理之前的统计数据
-    clearPreviousStats();
-
-    if (jobs < accounts.length) {
-      setTimeout(() => main(), config.stork.intervalSeconds * 1000);
-    } else if (jobs == accounts.length - 1 || jobs === accounts.length) {
-      jobs = 0;
-      setTimeout(() => main(), config.stork.intervalSeconds * 1000);
-    }
-  } catch (error) {
-    log(`验证过程已停止: ${error.message}`, '错误');
-  }
 }
 
 function loadProxies() {
@@ -204,7 +108,7 @@ function loadProxies() {
         return arr;
       };
     if (!fs.existsSync(config.threads.proxyFile)) {
-      log(`在 ${config.threads.proxyFile} 未找到代理文件，创建空文件`, '警告');
+      log(`代理文件未在 ${config.threads.proxyFile} 找到，创建空文件`, 'WARN');
       fs.writeFileSync(config.threads.proxyFile, '', 'utf8');
       return [];
     }
@@ -215,11 +119,33 @@ function loadProxies() {
       .filter(line => line && !line.startsWith('#'));
     const rotatedProxy = rotate(proxies);
     log(`从 ${config.threads.proxyFile} 加载了 ${proxies.length} 个代理`);
-    log(`尝试使用代理 ${rotatedProxy[0]}`);
+    log(`尝试使用 ${rotatedProxy[0]} 运行`);
     return rotatedProxy;
   } catch (error) {
-    log(`加载代理错误: ${error.message}`, '错误');
+    log(`加载代理出错: ${error.message}`, 'ERROR');
     return [];
+  }
+}
+
+async function retryWithBackoff(fn, maxRetries = 5, initialDelay = 1000) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error.message.includes('Too many requests') || error.code === 'TooManyRequestsException') {
+        attempt++;
+        const delay = initialDelay * Math.pow(2, attempt) + Math.random() * 1000;
+        log(`收到 Too Many Requests，第 ${attempt} 次重试，将等待 ${Math.round(delay/1000)} 秒`, 'WARN');
+        
+        if (attempt === maxRetries) {
+          throw new Error('达到最大重试次数，放弃本次认证');
+        }
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw error;
+      }
+    }
   }
 }
 
@@ -281,11 +207,15 @@ class TokenManager {
   }
 
   async refreshOrAuthenticate() {
+    const authFn = async () => {
+      return this.refreshToken ? await this.auth.refreshSession(this.refreshToken) : await this.auth.authenticate();
+    };
+
     try {
-      let result = this.refreshToken ? await this.auth.refreshSession(this.refreshToken) : await this.auth.authenticate();
+      const result = await retryWithBackoff(authFn);
       await this.updateTokens(result);
     } catch (error) {
-      log(`令牌刷新/认证错误: ${error.message}`, '错误');
+      log(`令牌刷新/认证最终失败: ${error.message}`, 'ERROR');
       throw error;
     }
   }
@@ -303,14 +233,14 @@ class TokenManager {
 
 async function getTokens() {
   try {
-    if (!fs.existsSync(config.stork.tokenPath)) throw new Error(`在 ${config.stork.tokenPath} 未找到令牌文件`);
+    if (!fs.existsSync(config.stork.tokenPath)) throw new Error(`令牌文件未在 ${config.stork.tokenPath} 找到`);
     const tokensData = await fs.promises.readFile(config.stork.tokenPath, 'utf8');
     const tokens = JSON.parse(tokensData);
     if (!tokens.accessToken || tokens.accessToken.length < 20) throw new Error('无效的访问令牌');
     log(`成功读取访问令牌: ${tokens.accessToken.substring(0, 10)}...`);
     return tokens;
   } catch (error) {
-    log(`读取令牌错误: ${error.message}`, '错误');
+    log(`读取令牌出错: ${error.message}`, 'ERROR');
     throw error;
   }
 }
@@ -321,7 +251,7 @@ async function saveTokens(tokens) {
     log('令牌保存成功');
     return true;
   } catch (error) {
-    log(`保存令牌错误: ${error.message}`, '错误');
+    log(`保存令牌出错: ${error.message}`, 'ERROR');
     return false;
   }
 }
@@ -335,7 +265,7 @@ function getProxyAgent(proxy) {
 
 async function refreshTokens(refreshToken) {
   try {
-    log('正在通过Stork API刷新访问令牌...');
+    log('通过 Stork API 刷新访问令牌...');
     const response = await axios({
       method: 'POST',
       url: `${config.stork.authURL}/refresh`,
@@ -354,10 +284,10 @@ async function refreshTokens(refreshToken) {
       isVerifying: false
     };
     await saveTokens(tokens);
-    log('通过Stork API成功刷新令牌');
+    log('通过 Stork API 成功刷新令牌');
     return tokens;
   } catch (error) {
-    log(`令牌刷新失败: ${error.message}`, '错误');
+    log(`令牌刷新失败: ${error.message}`, 'ERROR');
     throw error;
   }
 }
@@ -386,16 +316,16 @@ async function getSignedPrices(tokens) {
         ...assetData
       };
     });
-    log(`成功获取 ${result.length} 条签名价格`);
+    log(`成功检索到 ${result.length} 个签名价格`);
     return result;
   } catch (error) {
-    log(`获取签名价格错误: ${error.message}`, '错误');
+    log(`获取签名价格出错: ${error.message}`, 'ERROR');
     throw error;
   }
 }
 
 async function sendValidation(tokens, msgHash, isValid, proxy) {
-  try {
+  const sendRequest = async () => {
     const agent = getProxyAgent(proxy);
     const response = await axios({
       method: 'POST',
@@ -409,17 +339,21 @@ async function sendValidation(tokens, msgHash, isValid, proxy) {
       httpsAgent: agent,
       data: { msg_hash: msgHash, valid: isValid }
     });
-    log(`✓ 验证成功 ${msgHash.substring(0, 10)}... 通过代理 ${proxy || '直连'}`);
+    log(`✓ 验证成功，消息哈希: ${msgHash.substring(0, 10)}... 通过 ${proxy || '直接连接'}`);
     return response.data;
+  };
+
+  try {
+    return await retryWithBackoff(sendRequest);
   } catch (error) {
-    log(`✗ 验证失败 ${msgHash.substring(0, 10)}...: ${error.message}`, '错误');
+    log(`✗ 验证失败，消息哈希: ${msgHash.substring(0, 10)}...: ${error.message}`, 'ERROR');
     throw error;
   }
 }
 
 async function getUserStats(tokens) {
   try {
-    log('获取用户统计...');
+    log('获取用户统计数据...');
     const response = await axios({
       method: 'GET',
       url: `${config.stork.baseURL}/me`,
@@ -432,28 +366,28 @@ async function getUserStats(tokens) {
     });
     return response.data.data;
   } catch (error) {
-    log(`获取用户统计错误: ${error.message}`, '错误');
+    log(`获取用户统计数据出错: ${error.message}`, 'ERROR');
     throw error;
   }
 }
 
 function validatePrice(priceData) {
   try {
-    log(`正在验证资产 ${priceData.asset || '未知资产'}`);
+    log(`验证 ${priceData.asset || '未知资产'} 的数据`);
     if (!priceData.msg_hash || !priceData.price || !priceData.timestamp) {
-      log('数据不完整，视为无效', '警告');
+      log('数据不完整，视为无效', 'WARN');
       return false;
     }
     const currentTime = Date.now();
     const dataTime = new Date(priceData.timestamp).getTime();
     const timeDiffMinutes = (currentTime - dataTime) / (1000 * 60);
     if (timeDiffMinutes > 60) {
-      log(`数据过时 (${Math.round(timeDiffMinutes)} 分钟前)`, '警告');
+      log(`数据太旧（${Math.round(timeDiffMinutes)} 分钟前）`, 'WARN');
       return false;
     }
     return true;
   } catch (error) {
-    log(`验证错误: ${error.message}`, '错误');
+    log(`验证出错: ${error.message}`, 'ERROR');
     return false;
   }
 }
@@ -477,12 +411,12 @@ if (!isMainThread) {
 
   async function runValidationProcess(tokenManager) {
     try {
-      log('--------- 开始验证流程 ---------');
+      log('--------- 开始验证过程 ---------');
       const tokens = await getTokens();
       const initialUserData = await getUserStats(tokens);
 
       if (!initialUserData || !initialUserData.stats) {
-        throw new Error('无法获取初始用户统计');
+        throw new Error('无法获取初始用户统计数据');
       }
 
       const initialValidCount = initialUserData.stats.stork_signed_prices_valid_count || 0;
@@ -497,7 +431,7 @@ if (!isMainThread) {
       const proxies = await loadProxies();
 
       if (!signedPrices || signedPrices.length === 0) {
-        log('没有需要验证的数据');
+        log('没有数据需要验证');
         const userData = await getUserStats(tokens);
         displayStats(userData);
         return;
@@ -505,7 +439,6 @@ if (!isMainThread) {
 
       log(`使用 ${config.threads.maxWorkers} 个工作线程处理 ${signedPrices.length} 个数据点...`);
       const workers = [];
-
       const chunkSize = Math.ceil(signedPrices.length / config.threads.maxWorkers);
       const batches = [];
       for (let i = 0; i < signedPrices.length; i += chunkSize) {
@@ -526,11 +459,15 @@ if (!isMainThread) {
             worker.on('exit', () => resolve({ success: false, error: '工作线程退出' }));
           }));
         });
+        
+        if (i < batches.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
 
       const results = await Promise.all(workers);
       const successCount = results.filter(r => r.success).length;
-      log(`成功验证 ${successCount}/${results.length} 个数据`);
+      log(`成功处理 ${successCount}/${results.length} 个验证`);
 
       const updatedUserData = await getUserStats(tokens);
       const newValidCount = updatedUserData.stats.stork_signed_prices_valid_count || 0;
@@ -543,8 +480,8 @@ if (!isMainThread) {
       previousStats.invalidCount = newInvalidCount;
 
       displayStats(updatedUserData);
-      log(`--------- 验证摘要 ---------`);
-      log(`总处理数据: ${newValidCount}`);
+      log(`--------- 验证总结 ---------`);
+      log(`总共处理的数据: ${newValidCount}`);
       log(`成功: ${actualValidIncrease}`);
       log(`失败: ${actualInvalidIncrease}`);
       log('--------- 完成 ---------');
@@ -554,21 +491,22 @@ if (!isMainThread) {
       } else if (jobs == accounts.length - 1 || jobs === accounts.length) {
         jobs = 0;
         setTimeout(() => main(), config.stork.intervalSeconds * 1000);
-      } 
+      }
     } catch (error) {
-      log(`验证过程已停止: ${error.message}`, '错误');
+      log(`验证过程出错: ${error.message}`, 'ERROR');
+      setTimeout(() => runValidationProcess(tokenManager), 60 * 1000);
     }
   }
 
   function displayStats(userData) {
     if (!userData || !userData.stats) {
-      log('没有可用的有效统计数据', '警告');
+      log('没有可用的有效统计数据来显示', 'WARN');
       return;
     }
 
     console.clear();
     console.log('=============================================');
-    console.log('   STORK ORACLE 自动机器人   ');
+    console.log('STORK ORACLE  --   推特雪糕战神汉化@Hy78516012  ');
     console.log('=============================================');
     console.log(`时间: ${getTimestamp()}`);
     console.log('---------------------------------------------');
@@ -579,7 +517,7 @@ if (!isMainThread) {
     console.log('验证统计:');
     console.log(`✓ 有效验证: ${userData.stats.stork_signed_prices_valid_count || 0}`);
     console.log(`✗ 无效验证: ${userData.stats.stork_signed_prices_invalid_count || 0}`);
-    console.log(`↻ 上次验证时间: ${userData.stats.stork_signed_prices_last_verified_at || '从未'}`);
+    console.log(`↻ 最后验证时间: ${userData.stats.stork_signed_prices_last_verified_at || '从未'}`);
     console.log(`👥 推荐使用次数: ${userData.stats.referral_usage_count || 0}`);
     console.log('---------------------------------------------');
     console.log(`下次验证将在 ${config.stork.intervalSeconds} 秒后进行...`);
@@ -593,7 +531,6 @@ if (!isMainThread) {
     
     log(`正在处理 ${accounts[jobs].username}`);
     const tokenManager = new TokenManager(jobs);
-    jobs++;
 
     try {
       await tokenManager.getValidToken();
@@ -601,16 +538,34 @@ if (!isMainThread) {
 
       runValidationProcess(tokenManager);
       
-      // 防止垃圾邮件，通过禁用此间隔，因为上面的代码已经通过作业序列触发
-//     setInterval(() => runValidationProcess(tokenManager), config.stork.intervalSeconds * 1000);
-
       setInterval(async () => {
         await tokenManager.getValidToken();
         log('通过 Cognito 刷新令牌');
       }, 50 * 60 * 1000);
+
+      // 成功处理后才增加 jobs 计数器
+      jobs++;
     } catch (error) {
-      log(`应用程序启动失败: ${error.message}`, '错误');
-      process.exit(1);
+      log(`应用程序启动失败: ${error.message}`, 'ERROR');
+      
+      if (error.message.includes('Password attempts exceeded')) {
+        // 处理密码尝试次数超限的情况
+        log(`账号 ${accounts[jobs].username} 密码尝试次数超限，跳过此账号`, 'WARN');
+        
+        if (jobs < accounts.length - 1) {
+          // 如果不是最后一个账号，跳到下一个
+          jobs++;
+          setTimeout(() => main(), 1000); // 短暂延迟后处理下一个账号
+        } else {
+          // 如果是最后一个账号，返回第一个
+          jobs = 0;
+          log('已是最后一个账号，返回处理第一个账号', 'INFO');
+          setTimeout(() => main(), 1000);
+        }
+      } else {
+        // 其他错误，等待60秒后重试当前账号
+        setTimeout(() => main(), 60 * 1000);
+      }
     }
   }
   
