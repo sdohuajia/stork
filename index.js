@@ -506,7 +506,6 @@ if (!isMainThread) {
 
     console.clear();
     console.log('=============================================');
-    console.log('STORK ORACLE  --   推特雪糕战神汉化@Hy78516012  ');
     console.log('=============================================');
     console.log(`时间: ${getTimestamp()}`);
     console.log('---------------------------------------------');
