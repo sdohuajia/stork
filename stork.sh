@@ -72,11 +72,11 @@ function deploy_stork_node() {
     fi
 
     echo "请输入代理地址（格式：http://代理账号:代理密码@127.0.0.1:8080）："
-    > "stork/proxies.txt"
+    > "stork/proxy.txt"
     while true; do
         read -p "代理地址（回车结束）：" proxy
         [[ -z "$proxy" ]] && break
-        echo "$proxy" >> "stork/proxies.txt"
+        echo "$proxy" >> "stork/proxy.txt"
     done
 
     # 处理账户信息
