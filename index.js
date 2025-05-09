@@ -42,7 +42,7 @@ class Stork {
   welcome() {
     console.log(
       `${chalk.greenBright('自动Ping ')}${chalk.blueBright('Stork - 机器人')}\n` +
-      `${chalk.greenBright('Rey? ')}${chalk.yellowBright('<这是水印>')}`
+      `${chalk.greenBright('Rey? ')}${chalk.yellowBright('<这不是水印，这是神>')}`
     );
   }
 
