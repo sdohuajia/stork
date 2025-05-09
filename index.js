@@ -1,573 +1,551 @@
-import AmazonCognitoIdentity from 'amazon-cognito-identity-js';
-import axios from 'axios';
-import fs from 'fs';
-import path from 'path';
-import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import { SocksProxyAgent } from 'socks-proxy-agent';
-import { accounts } from "./accounts.js";
-import { fileURLToPath } from 'url';
+const axios = require('axios').default;
+const { SocksProxyAgent } = require('socks-proxy-agent');
+const { HttpProxyAgent } = require('https-proxy-agent');
+const moment = require('moment-timezone');
+const chalk = require('chalk');
+const fs = require('fs').promises;
+const os = require('os');
+const readline = require('readline');
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const wib = 'Asia/Jakarta';
 
-// 加载配置文件 config.json
-function loadConfig() {
-  try {
-    const configPath = path.join(__dirname, 'config.json');
-
-    if (!fs.existsSync(configPath)) {
-      log(`配置文件未在 ${configPath} 找到，使用默认配置`, 'WARN');
-      const defaultConfig = {
-        cognito: {
-          region: 'ap-northeast-1',
-          clientId: '5msns4n49hmg3dftp2tp1t2iuh',
-          userPoolId: 'ap-northeast-1_M22I44OpC',
-        },
-        stork: {
-          intervalSeconds: 30
-        },
-        threads: {
-          maxWorkers: 1
-        }
-      };
-      fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), 'utf8');
-      return defaultConfig;
-    }
-    
-    const userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    log('成功从 config.json 加载配置 \n');
-    log('成功从 accounts.js 加载账户');
-    return userConfig;
-  } catch (error) {
-    log(`加载配置出错: ${error.message}`, 'ERROR');
-    throw new Error('加载配置失败');
+class Stork {
+  constructor() {
+    this.headers = {
+      Accept: '*/*',
+      'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'cross-site',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+    };
+    this.GOTRUE_API_URL = 'https://app-auth.jp.stork-oracle.network';
+    this.STORK_API_URL = 'https://app-api.jp.stork-oracle.network';
+    this.proxies = [];
+    this.proxyIndex = 0;
+    this.accountProxies = {};
+    this.accessTokens = {};
+    this.refreshTokens = {};
   }
-}
 
-const userConfig = loadConfig();
-const config = {
-  cognito: {
-    region: userConfig.cognito?.region || 'ap-northeast-1',
-    clientId: userConfig.cognito?.clientId || '5msns4n49hmg3dftp2tp1t2iuh',
-    userPoolId: userConfig.cognito?.userPoolId || 'ap-northeast-1_M22I44OpC',
-    username: userConfig.cognito?.username || '',
-    password: userConfig.cognito?.password || ''
-  },
-  stork: {
-    baseURL: 'https://app-api.jp.stork-oracle.network/v1',
-    authURL: 'https://api.jp.stork-oracle.network/auth',
-    tokenPath: path.join(__dirname, 'tokens.json'),
-    intervalSeconds: userConfig.stork?.intervalSeconds || 10,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-    origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl'
-  },
-  threads: {
-    maxWorkers: userConfig.threads?.maxWorkers || 10,
-    proxyFile: path.join(__dirname, 'proxies.txt')
+  clearTerminal() {
+    console.clear();
   }
-};
 
-function validateConfig() {
-  if (!accounts[0].username || !accounts[0].password) {
-    log('错误: 用户名和密码必须在 accounts.js 中设置', 'ERROR');
-    console.log('\n请更新你的 accounts.js 文件，填写你的凭据:');
-    console.log(JSON.stringify({
-        username: "你的邮箱",
-        password: "你的密码"
-    }, null, 2));
-    return false;
+  log(message) {
+    console.log(
+      `${chalk.cyanBright(`[ ${moment().tz(wib).format('MM/DD/YY HH:mm:ss z')} ]`)}${chalk.whiteBright(' | ')}${message}`
+    );
   }
-  return true;
-}
 
-const poolData = { UserPoolId: config.cognito.userPoolId, ClientId: config.cognito.clientId };
-const userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+  welcome() {
+    console.log(
+      `${chalk.greenBright('自动Ping ')}${chalk.blueBright('Stork - 机器人')}\n` +
+      `${chalk.greenBright('Rey? ')}${chalk.yellowBright('<这是水印>')}`
+    );
+  }
 
-function getTimestamp() {
-  const now = new Date();
-  return now.toISOString().replace('T', ' ').substr(0, 19);
-}
+  formatSeconds(seconds) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs
+      .toString()
+      .padStart(2, '0')}`;
+  }
 
-function getFormattedDate() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-}
-
-function log(message, type = 'INFO') {
-  console.log(`[${getFormattedDate()}] [${type}] ${message}`);
-}
-
-function loadProxies() {
-  try {
-    const rotate = arr => {
-        for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [arr[i], arr[j]] = [arr[j], arr[i]];
-          }
-        return arr;
-      };
-    if (!fs.existsSync(config.threads.proxyFile)) {
-      log(`代理文件未在 ${config.threads.proxyFile} 找到，创建空文件`, 'WARN');
-      fs.writeFileSync(config.threads.proxyFile, '', 'utf8');
+  async loadAccounts() {
+    const filename = 'accounts.json';
+    try {
+      const data = await fs.readFile(filename, 'utf8');
+      const accounts = JSON.parse(data);
+      return Array.isArray(accounts) ? accounts : [];
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        this.log(`${chalk.redBright(`文件 ${filename} 未找到。`)}`);
+      } else {
+        this.log(`${chalk.redBright(`解析 ${filename} 出错：${error.message}`)}`);
+      }
       return [];
     }
-    const proxyData = fs.readFileSync(config.threads.proxyFile, 'utf8');
-    const proxies = proxyData
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith('#'));
-    const rotatedProxy = rotate(proxies);
-    log(`从 ${config.threads.proxyFile} 加载了 ${proxies.length} 个代理`);
-    log(`尝试使用 ${rotatedProxy[0]} 运行`);
-    return rotatedProxy;
-  } catch (error) {
-    log(`加载代理出错: ${error.message}`, 'ERROR');
-    return [];
   }
-}
 
-async function retryWithBackoff(fn, maxRetries = 5, initialDelay = 1000) {
-  let attempt = 0;
-  while (attempt < maxRetries) {
+  async loadProxies(useProxyChoice) {
+    const filename = 'proxy.txt';
     try {
-      return await fn();
-    } catch (error) {
-      if (error.message.includes('Too many requests') || error.code === 'TooManyRequestsException') {
-        attempt++;
-        const delay = initialDelay * Math.pow(2, attempt) + Math.random() * 1000;
-        log(`收到 Too Many Requests，第 ${attempt} 次重试，将等待 ${Math.round(delay/1000)} 秒`, 'WARN');
-        
-        if (attempt === maxRetries) {
-          throw new Error('达到最大重试次数，放弃本次认证');
-        }
-        await new Promise(resolve => setTimeout(resolve, delay));
+      if (useProxyChoice === 1) {
+        const response = await axios.get(
+          'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/all.txt',
+          { timeout: 30000 }
+        );
+        await fs.writeFile(filename, response.data);
+        this.proxies = response.data.split('\n').filter((line) => line.trim());
       } else {
-        throw error;
-      }
-    }
-  }
-}
-
-class CognitoAuth {
-  constructor(username, password) {
-    this.username = username;
-    this.password = password;
-    this.authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: username, Password: password });
-    this.cognitoUser = new AmazonCognitoIdentity.CognitoUser({ Username: username, Pool: userPool });
-  }
-
-  authenticate() {
-    return new Promise((resolve, reject) => {
-      this.cognitoUser.authenticateUser(this.authenticationDetails, {
-        onSuccess: (result) => resolve({
-          accessToken: result.getAccessToken().getJwtToken(),
-          idToken: result.getIdToken().getJwtToken(),
-          refreshToken: result.getRefreshToken().getToken(),
-          expiresIn: result.getAccessToken().getExpiration() * 1000 - Date.now()
-        }),
-        onFailure: (err) => reject(err),
-        newPasswordRequired: () => reject(new Error('需要新密码'))
-      });
-    });
-  }
-
-  refreshSession(refreshToken) {
-    const refreshTokenObj = new AmazonCognitoIdentity.CognitoRefreshToken({ RefreshToken: refreshToken });
-    return new Promise((resolve, reject) => {
-      this.cognitoUser.refreshSession(refreshTokenObj, (err, result) => {
-        if (err) reject(err);
-        else resolve({
-          accessToken: result.getAccessToken().getJwtToken(),
-          idToken: result.getIdToken().getJwtToken(),
-          refreshToken: refreshToken,
-          expiresIn: result.getAccessToken().getExpiration() * 1000 - Date.now()
-        });
-      });
-    });
-  }
-}
-
-class TokenManager {
-  constructor(i) {
-    this.accessToken = null;
-    this.refreshToken = null;
-    this.idToken = null;
-    this.expiresAt = null;
-    this.auth = new CognitoAuth(accounts[i].username, accounts[i].password);
-  }
-
-  async getValidToken() {
-    if (!this.accessToken || this.isTokenExpired()) await this.refreshOrAuthenticate();
-    return this.accessToken;
-  }
-
-  isTokenExpired() {
-    return Date.now() >= this.expiresAt;
-  }
-
-  async refreshOrAuthenticate() {
-    const authFn = async () => {
-      return this.refreshToken ? await this.auth.refreshSession(this.refreshToken) : await this.auth.authenticate();
-    };
-
-    try {
-      const result = await retryWithBackoff(authFn);
-      await this.updateTokens(result);
-    } catch (error) {
-      log(`令牌刷新/认证最终失败: ${error.message}`, 'ERROR');
-      throw error;
-    }
-  }
-
-  async updateTokens(result) {
-    this.accessToken = result.accessToken;
-    this.idToken = result.idToken;
-    this.refreshToken = result.refreshToken;
-    this.expiresAt = Date.now() + result.expiresIn;
-    const tokens = { accessToken: this.accessToken, idToken: this.idToken, refreshToken: this.refreshToken, isAuthenticated: true, isVerifying: false };
-    await saveTokens(tokens);
-    log('令牌已更新并保存到 tokens.json');
-  }
-}
-
-async function getTokens() {
-  try {
-    if (!fs.existsSync(config.stork.tokenPath)) throw new Error(`令牌文件未在 ${config.stork.tokenPath} 找到`);
-    const tokensData = await fs.promises.readFile(config.stork.tokenPath, 'utf8');
-    const tokens = JSON.parse(tokensData);
-    if (!tokens.accessToken || tokens.accessToken.length < 20) throw new Error('无效的访问令牌');
-    log(`成功读取访问令牌: ${tokens.accessToken.substring(0, 10)}...`);
-    return tokens;
-  } catch (error) {
-    log(`读取令牌出错: ${error.message}`, 'ERROR');
-    throw error;
-  }
-}
-
-async function saveTokens(tokens) {
-  try {
-    await fs.promises.writeFile(config.stork.tokenPath, JSON.stringify(tokens, null, 2), 'utf8');
-    log('令牌保存成功');
-    return true;
-  } catch (error) {
-    log(`保存令牌出错: ${error.message}`, 'ERROR');
-    return false;
-  }
-}
-
-function getProxyAgent(proxy) {
-  if (!proxy) return null;
-  if (proxy.startsWith('http')) return new HttpsProxyAgent(proxy);
-  if (proxy.startsWith('socks4') || proxy.startsWith('socks5')) return new SocksProxyAgent(proxy);
-  throw new Error(`不支持的代理协议: ${proxy}`);
-}
-
-async function refreshTokens(refreshToken) {
-  try {
-    log('通过 Stork API 刷新访问令牌...');
-    const response = await axios({
-      method: 'POST',
-      url: `${config.stork.authURL}/refresh`,
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': config.stork.userAgent,
-        'Origin': config.stork.origin
-      },
-      data: { refresh_token: refreshToken }
-    });
-    const tokens = {
-      accessToken: response.data.access_token,
-      idToken: response.data.id_token || '',
-      refreshToken: response.data.refresh_token || refreshToken,
-      isAuthenticated: true,
-      isVerifying: false
-    };
-    await saveTokens(tokens);
-    log('通过 Stork API 成功刷新令牌');
-    return tokens;
-  } catch (error) {
-    log(`令牌刷新失败: ${error.message}`, 'ERROR');
-    throw error;
-  }
-}
-
-async function getSignedPrices(tokens) {
-  try {
-    log('获取签名价格数据...');
-    const response = await axios({
-      method: 'GET',
-      url: `${config.stork.baseURL}/stork_signed_prices`,
-      headers: {
-        'Authorization': `Bearer ${tokens.accessToken}`,
-        'Content-Type': 'application/json',
-        'Origin': config.stork.origin,
-        'User-Agent': config.stork.userAgent
-      }
-    });
-    const dataObj = response.data.data;
-    const result = Object.keys(dataObj).map(assetKey => {
-      const assetData = dataObj[assetKey];
-      return {
-        asset: assetKey,
-        msg_hash: assetData.timestamped_signature.msg_hash,
-        price: assetData.price,
-        timestamp: new Date(assetData.timestamped_signature.timestamp / 1000000).toISOString(),
-        ...assetData
-      };
-    });
-    log(`成功检索到 ${result.length} 个签名价格`);
-    return result;
-  } catch (error) {
-    log(`获取签名价格出错: ${error.message}`, 'ERROR');
-    throw error;
-  }
-}
-
-async function sendValidation(tokens, msgHash, isValid, proxy) {
-  const sendRequest = async () => {
-    const agent = getProxyAgent(proxy);
-    const response = await axios({
-      method: 'POST',
-      url: `${config.stork.baseURL}/stork_signed_prices/validations`,
-      headers: {
-        'Authorization': `Bearer ${tokens.accessToken}`,
-        'Content-Type': 'application/json',
-        'Origin': config.stork.origin,
-        'User-Agent': config.stork.userAgent
-      },
-      httpsAgent: agent,
-      data: { msg_hash: msgHash, valid: isValid }
-    });
-    log(`✓ 验证成功，消息哈希: ${msgHash.substring(0, 10)}... 通过 ${proxy || '直接连接'}`);
-    return response.data;
-  };
-
-  try {
-    return await retryWithBackoff(sendRequest);
-  } catch (error) {
-    log(`✗ 验证失败，消息哈希: ${msgHash.substring(0, 10)}...: ${error.message}`, 'ERROR');
-    throw error;
-  }
-}
-
-async function getUserStats(tokens) {
-  try {
-    log('获取用户统计数据...');
-    const response = await axios({
-      method: 'GET',
-      url: `${config.stork.baseURL}/me`,
-      headers: {
-        'Authorization': `Bearer ${tokens.accessToken}`,
-        'Content-Type': 'application/json',
-        'Origin': config.stork.origin,
-        'User-Agent': config.stork.userAgent
-      }
-    });
-    return response.data.data;
-  } catch (error) {
-    log(`获取用户统计数据出错: ${error.message}`, 'ERROR');
-    throw error;
-  }
-}
-
-function validatePrice(priceData) {
-  try {
-    log(`验证 ${priceData.asset || '未知资产'} 的数据`);
-    if (!priceData.msg_hash || !priceData.price || !priceData.timestamp) {
-      log('数据不完整，视为无效', 'WARN');
-      return false;
-    }
-    const currentTime = Date.now();
-    const dataTime = new Date(priceData.timestamp).getTime();
-    const timeDiffMinutes = (currentTime - dataTime) / (1000 * 60);
-    if (timeDiffMinutes > 60) {
-      log(`数据太旧（${Math.round(timeDiffMinutes)} 分钟前）`, 'WARN');
-      return false;
-    }
-    return true;
-  } catch (error) {
-    log(`验证出错: ${error.message}`, 'ERROR');
-    return false;
-  }
-}
-
-if (!isMainThread) {
-  const { priceData, tokens, proxy } = workerData;
-
-  async function validateAndSend() {
-    try {
-      const isValid = validatePrice(priceData);
-      await sendValidation(tokens, priceData.msg_hash, isValid, proxy);
-      parentPort.postMessage({ success: true, msgHash: priceData.msg_hash, isValid });
-    } catch (error) {
-      parentPort.postMessage({ success: false, error: error.message, msgHash: priceData.msg_hash });
-    }
-  }
-
-  validateAndSend();
-} else {
-  let previousStats = { validCount: 0, invalidCount: 0 };
-
-  async function runValidationProcess(tokenManager) {
-    try {
-      log('--------- 开始验证过程 ---------');
-      const tokens = await getTokens();
-      const initialUserData = await getUserStats(tokens);
-
-      if (!initialUserData || !initialUserData.stats) {
-        throw new Error('无法获取初始用户统计数据');
+        const data = await fs.readFile(filename, 'utf8');
+        this.proxies = data.split('\n').filter((line) => line.trim());
       }
 
-      const initialValidCount = initialUserData.stats.stork_signed_prices_valid_count || 0;
-      const initialInvalidCount = initialUserData.stats.stork_signed_prices_invalid_count || 0;
-
-      if (previousStats.validCount === 0 && previousStats.invalidCount === 0) {
-        previousStats.validCount = initialValidCount;
-        previousStats.invalidCount = initialInvalidCount;
-      }
-
-      const signedPrices = await getSignedPrices(tokens);
-      const proxies = await loadProxies();
-
-      if (!signedPrices || signedPrices.length === 0) {
-        log('没有数据需要验证');
-        const userData = await getUserStats(tokens);
-        displayStats(userData);
+      if (!this.proxies.length) {
+        this.log(`${chalk.redBright('未找到代理。')}`);
         return;
       }
 
-      log(`使用 ${config.threads.maxWorkers} 个工作线程处理 ${signedPrices.length} 个数据点...`);
-      const workers = [];
-      const chunkSize = Math.ceil(signedPrices.length / config.threads.maxWorkers);
-      const batches = [];
-      for (let i = 0; i < signedPrices.length; i += chunkSize) {
-        batches.push(signedPrices.slice(i, i + chunkSize));
-      }
-
-      for (let i = 0; i < Math.min(batches.length, config.threads.maxWorkers); i++) {
-        const batch = batches[i];
-        const proxy = proxies.length > 0 ? proxies[i % proxies.length] : null;
-
-        batch.forEach(priceData => {
-          workers.push(new Promise((resolve) => {
-            const worker = new Worker(__filename, {
-              workerData: { priceData, tokens, proxy }
-            });
-            worker.on('message', resolve);
-            worker.on('error', (error) => resolve({ success: false, error: error.message }));
-            worker.on('exit', () => resolve({ success: false, error: '工作线程退出' }));
-          }));
-        });
-        
-        if (i < batches.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-
-      const results = await Promise.all(workers);
-      const successCount = results.filter(r => r.success).length;
-      log(`成功处理 ${successCount}/${results.length} 个验证`);
-
-      const updatedUserData = await getUserStats(tokens);
-      const newValidCount = updatedUserData.stats.stork_signed_prices_valid_count || 0;
-      const newInvalidCount = updatedUserData.stats.stork_signed_prices_invalid_count || 0;
-
-      const actualValidIncrease = newValidCount - previousStats.validCount;
-      const actualInvalidIncrease = newInvalidCount - previousStats.invalidCount;
-
-      previousStats.validCount = newValidCount;
-      previousStats.invalidCount = newInvalidCount;
-
-      displayStats(updatedUserData);
-      log(`--------- 验证总结 ---------`);
-      log(`总共处理的数据: ${newValidCount}`);
-      log(`成功: ${actualValidIncrease}`);
-      log(`失败: ${actualInvalidIncrease}`);
-      log('--------- 完成 ---------');
-      
-      if (jobs < accounts.length) {
-        setTimeout(() => main(), config.stork.intervalSeconds * 1000);
-      } else if (jobs == accounts.length - 1 || jobs === accounts.length) {
-        jobs = 0;
-        setTimeout(() => main(), config.stork.intervalSeconds * 1000);
-      }
+      this.log(
+        `${chalk.greenBright('代理总数：')}${chalk.whiteBright(this.proxies.length)}`
+      );
     } catch (error) {
-      log(`验证过程出错: ${error.message}`, 'ERROR');
-      setTimeout(() => runValidationProcess(tokenManager), 60 * 1000);
+      this.log(`${chalk.redBright(`加载代理失败：${error.message}`)}`);
+      this.proxies = [];
     }
   }
 
-  function displayStats(userData) {
-    if (!userData || !userData.stats) {
-      log('没有可用的有效统计数据来显示', 'WARN');
-      return;
-    }
-
-    console.clear();
-    console.log('=============================================');
-    console.log('=============================================');
-    console.log(`时间: ${getTimestamp()}`);
-    console.log('---------------------------------------------');
-    console.log(`用户: ${userData.email || '无'}`);
-    console.log(`ID: ${userData.id || '无'}`);
-    console.log(`推荐码: ${userData.referral_code || '无'}`);
-    console.log('---------------------------------------------');
-    console.log('验证统计:');
-    console.log(`✓ 有效验证: ${userData.stats.stork_signed_prices_valid_count || 0}`);
-    console.log(`✗ 无效验证: ${userData.stats.stork_signed_prices_invalid_count || 0}`);
-    console.log(`↻ 最后验证时间: ${userData.stats.stork_signed_prices_last_verified_at || '从未'}`);
-    console.log(`👥 推荐使用次数: ${userData.stats.referral_usage_count || 0}`);
-    console.log('---------------------------------------------');
-    console.log(`下次验证将在 ${config.stork.intervalSeconds} 秒后进行...`);
-    console.log('=============================================');
+  checkProxySchemes(proxy) {
+    const schemes = ['http://', 'https://', 'socks4://', 'socks5://'];
+    return schemes.some((scheme) => proxy.startsWith(scheme)) ? proxy : `http://${proxy}`;
   }
 
-  async function main() {
-    if (!validateConfig()) {
-      process.exit(1);
+  getNextProxyForAccount(account) {
+    if (!(account in this.accountProxies)) {
+      if (!this.proxies.length) return null;
+      const proxy = this.checkProxySchemes(this.proxies[this.proxyIndex]);
+      this.accountProxies[account] = proxy;
+      this.proxyIndex = (this.proxyIndex + 1) % this.proxies.length;
     }
-    
-    log(`正在处理 ${accounts[jobs].username}`);
-    const tokenManager = new TokenManager(jobs);
+    return this.accountProxies[account];
+  }
 
-    try {
-      await tokenManager.getValidToken();
-      log('初始认证成功');
+  rotateProxyForAccount(account) {
+    if (!this.proxies.length) return null;
+    const proxy = this.checkProxySchemes(this.proxies[this.proxyIndex]);
+    this.accountProxies[account] = proxy;
+    this.proxyIndex = (this.proxyIndex + 1) % this.proxies.length;
+    return proxy;
+  }
 
-      runValidationProcess(tokenManager);
-      
-      setInterval(async () => {
-        await tokenManager.getValidToken();
-        log('通过 Cognito 刷新令牌');
-      }, 50 * 60 * 1000);
+  maskAccount(account) {
+    if (account.includes('@')) {
+      const [local, domain] = account.split('@');
+      const maskedLocal = local.slice(0, 3) + '***' + local.slice(-3);
+      return `${maskedLocal}@${domain}`;
+    }
+    return account.slice(0, 3) + '***' + account.slice(-3);
+  }
 
-      // 成功处理后才增加 jobs 计数器
-      jobs++;
-    } catch (error) {
-      log(`应用程序启动失败: ${error.message}`, 'ERROR');
-      
-      if (error.message.includes('Password attempts exceeded')) {
-        // 处理密码尝试次数超限的情况
-        log(`账号 ${accounts[jobs].username} 密码尝试次数超限，跳过此账号`, 'WARN');
-        
-        if (jobs < accounts.length - 1) {
-          // 如果不是最后一个账号，跳到下一个
-          jobs++;
-          setTimeout(() => main(), 1000); // 短暂延迟后处理下一个账号
+  printMessage(account, proxy, color, message) {
+    this.log(
+      `${chalk.cyanBright('[ 账户：')}${chalk.whiteBright(` ${this.maskAccount(account)} `)}${chalk.magentaBright(
+        '-'
+      )}${chalk.cyanBright(' 代理：')}${chalk.whiteBright(proxy || '无')}${chalk.magentaBright(
+        ' - '
+      )}${chalk.cyanBright('状态：')}${color(message)}`
+    );
+  }
+
+  async printQuestion() {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    const question = (query) =>
+      new Promise((resolve) => rl.question(query, (answer) => resolve(answer)));
+
+    while (true) {
+      console.log('1. 使用 Monosans 代理运行');
+      console.log('2. 使用私有代理运行');
+      console.log('3. 不使用代理运行');
+      try {
+        const choose = parseInt(
+          await question('选择 [1/2/3] -> '),
+          10
+        );
+        if ([1, 2, 3].includes(choose)) {
+          const proxyType =
+            choose === 1
+              ? '使用 Monosans 代理运行'
+              : choose === 2
+              ? '使用私有代理运行'
+              : '不使用代理运行';
+          console.log(`${chalk.greenBright(`${proxyType} 已选择。`)}`);
+          rl.close();
+          return choose;
         } else {
-          // 如果是最后一个账号，返回第一个
-          jobs = 0;
-          log('已是最后一个账号，返回处理第一个账号', 'INFO');
-          setTimeout(() => main(), 1000);
+          console.log(
+            `${chalk.redBright('请输入 1、2 或 3。')}`
+          );
         }
-      } else {
-        // 其他错误，等待60秒后重试当前账号
-        setTimeout(() => main(), 60 * 1000);
+      } catch {
+        console.log(
+          `${chalk.redBright('输入无效，请输入数字（1、2 或 3）。')}`
+        );
       }
     }
   }
-  
-  let jobs = 0;
-  main();
+
+  async userLogin(email, password, proxy, retries = 5) {
+    const url = `${this.GOTRUE_API_URL}/token?grant_type=password`;
+    const data = { email, password };
+    const headers = {
+      ...this.headers,
+      'Content-Type': 'application/json',
+      Origin: 'https://app.stork.network',
+      Referer: 'https://app.stork.network/',
+    };
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const agent = proxy
+          ? proxy.startsWith('socks')
+            ? new SocksProxyAgent(proxy)
+            : new HttpProxyAgent(proxy)
+          : null;
+        const response = await axios.post(url, data, {
+          headers,
+          httpsAgent: agent,
+          timeout: 60000,
+        });
+        return response.data;
+      } catch (error) {
+        if (attempt < retries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
+        }
+        this.printMessage(
+          email,
+          proxy,
+          chalk.redBright,
+          `登录失败：${chalk.yellowBright(error.message)}`
+        );
+        return null;
+      }
+    }
+  }
+
+  async refreshToken(email, password, useProxy, proxy, retries = 5) {
+    const url = `${this.GOTRUE_API_URL}/token?grant_type=refresh_token`;
+    const data = { refresh_token: this.refreshTokens[email] };
+    const headers = {
+      ...this.headers,
+      'Content-Type': 'application/json',
+      Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl',
+    };
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const agent = proxy
+          ? proxy.startsWith('socks')
+            ? new SocksProxyAgent(proxy)
+            : new HttpProxyAgent(proxy)
+          : null;
+        const response = await axios.post(url, data, {
+          headers,
+          httpsAgent: agent,
+          timeout: 120000,
+        });
+        return response.data;
+      } catch (error) {
+        if (error.response?.status === 401) {
+          await this.processUserLogin(email, password, useProxy);
+          data.refresh_token = this.refreshTokens[email];
+          continue;
+        }
+        if (attempt < retries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
+        }
+        this.printMessage(
+          email,
+          proxy,
+          chalk.redBright,
+          `刷新令牌失败：${chalk.yellowBright(error.message)}`
+        );
+        return null;
+      }
+    }
+  }
+
+  async userInfo(email, proxy, retries = 5) {
+    const url = `${this.STORK_API_URL}/v1/me`;
+    const headers = {
+      ...this.headers,
+      Authorization: `Bearer ${this.accessTokens[email]}`,
+      Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl',
+    };
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const agent = proxy
+          ? proxy.startsWith('socks')
+            ? new SocksProxyAgent(proxy)
+            : new HttpProxyAgent(proxy)
+          : null;
+        const response = await axios.get(url, {
+          headers,
+          httpsAgent: agent,
+          timeout: 120000,
+        });
+        return response.data.data;
+      } catch (error) {
+        if (attempt < retries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
+        }
+        this.printMessage(
+          email,
+          proxy,
+          chalk.redBright,
+          `获取用户数据失败：${chalk.yellowBright(error.message)}`
+        );
+        return null;
+      }
+    }
+  }
+
+  async turnOnVerification(email, proxy, retries = 5) {
+    const url = `${this.STORK_API_URL}/v1/stork_signed_prices`;
+    const headers = {
+      ...this.headers,
+      Authorization: `Bearer ${this.accessTokens[email]}`,
+      Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl',
+    };
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const agent = proxy
+          ? proxy.startsWith('socks')
+            ? new SocksProxyAgent(proxy)
+            : new HttpProxyAgent(proxy)
+          : null;
+        const response = await axios.get(url, {
+          headers,
+          httpsAgent: agent,
+          timeout: 120000,
+        });
+        return response.data.data;
+      } catch (error) {
+        if (attempt < retries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
+        }
+        this.printMessage(
+          email,
+          proxy,
+          chalk.redBright,
+          `获取消息哈希失败：${chalk.yellowBright(error.message)}`
+        );
+        return null;
+      }
+    }
+  }
+
+  async validateVerification(email, msgHash, proxy, retries = 5) {
+    const url = `${this.STORK_API_URL}/v1/stork_signed_prices/validations`;
+    const data = { msg_hash: msgHash, valid: true };
+    const headers = {
+      ...this.headers,
+      Authorization: `Bearer ${this.accessTokens[email]}`,
+      'Content-Type': 'application/json',
+      Origin: 'chrome-extension://knnliglhgkmlblppdejchidfihjnockl',
+    };
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const agent = proxy
+          ? proxy.startsWith('socks')
+            ? new SocksProxyAgent(proxy)
+            : new HttpProxyAgent(proxy)
+          : null;
+        const response = await axios.post(url, data, {
+          headers,
+          httpsAgent: agent,
+          timeout: 60000,
+        });
+        return response.data;
+      } catch (error) {
+        if (attempt < retries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
+        }
+        this.printMessage(
+          email,
+          proxy,
+          chalk.redBright,
+          `Ping失败：${chalk.yellowBright(error.message)}`
+        );
+        return null;
+      }
+    }
+  }
+
+  async processUserLogin(email, password, useProxy) {
+    let proxy = useProxy ? this.getNextProxyForAccount(email) : null;
+    let token = null;
+    while (!token) {
+      token = await this.userLogin(email, password, proxy);
+      if (!token) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        proxy = useProxy ? this.rotateProxyForAccount(email) : null;
+        continue;
+      }
+
+      this.accessTokens[email] = token.access_token;
+      this.refreshTokens[email] = token.refresh_token;
+
+      this.printMessage(email, proxy, chalk.greenBright, '登录成功');
+      return [this.accessTokens[email], this.refreshTokens[email]];
+    }
+  }
+
+  async processRefreshingToken(email, password, useProxy) {
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, 55 * 60 * 1000));
+      let proxy = useProxy ? this.getNextProxyForAccount(email) : null;
+      let token = null;
+      while (!token) {
+        token = await this.refreshToken(email, password, useProxy, proxy);
+        if (!token) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          proxy = useProxy ? this.rotateProxyForAccount(email) : null;
+          continue;
+        }
+
+        this.accessTokens[email] = token.access_token;
+        this.refreshTokens[email] = token.refresh_token;
+
+        this.printMessage(email, proxy, chalk.greenBright, '刷新令牌成功');
+      }
+    }
+  }
+
+  async processUserEarning(email, useProxy) {
+    while (true) {
+      const proxy = useProxy ? this.getNextProxyForAccount(email) : null;
+      const user = await this.userInfo(email, proxy);
+      if (user) {
+        const verifiedMsg = user.stats?.stork_signed_prices_valid_count || 0;
+        const invalidMsg = user.stats?.stork_signed_prices_invalid_count || 0;
+
+        this.printMessage(
+          email,
+          proxy,
+          chalk.greenBright,
+          `已验证消息：${chalk.whiteBright(` ${verifiedMsg} `)}${chalk.magentaBright(
+            '-'
+          )}${chalk.yellowBright(' 无效消息：')}${chalk.whiteBright(invalidMsg)}`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5 * 60 * 1000));
+    }
+  }
+
+  async processSendPing(email, useProxy) {
+    while (true) {
+      const proxy = useProxy ? this.getNextProxyForAccount(email) : null;
+
+      process.stdout.write(
+        `${chalk.cyanBright(`[ ${moment().tz(wib).format('MM/DD/YY HH:mm:ss z')} ]`)}${chalk.whiteBright(
+          ' | '
+        )}${chalk.yellowBright('尝试获取哈希消息...')}\r`
+      );
+
+      const verify = await this.turnOnVerification(email, proxy);
+      if (verify) {
+        let msgHash;
+        for (const key in verify) {
+          if (key.includes('USD')) {
+            msgHash = verify[key].timestamped_signature?.msg_hash;
+            this.printMessage(
+              email,
+              proxy,
+              chalk.greenBright,
+              `消息哈希：${chalk.blueBright(this.maskAccount(msgHash))}`
+            );
+            break;
+          }
+        }
+
+        process.stdout.write(
+          `${chalk.cyanBright(`[ ${moment().tz(wib).format('MM/DD/YY HH:mm:ss z')} ]`)}${chalk.whiteBright(
+            ' | '
+          )}${chalk.yellowBright('尝试发送Ping...')}\r`
+        );
+
+        const ping = await this.validateVerification(email, msgHash, proxy);
+        if (ping && ping.message === 'ok') {
+          this.printMessage(email, proxy, chalk.greenBright, 'Ping成功');
+        }
+      }
+
+      process.stdout.write(
+        `${chalk.cyanBright(`[ ${moment().tz(wib).format('MM/DD/YY HH:mm:ss z')} ]`)}${chalk.whiteBright(
+          ' | '
+        )}${chalk.blueBright('等待5分钟进行下一次Ping...')}\r`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5 * 60 * 1000));
+    }
+  }
+
+  async processAccounts(email, password, useProxy) {
+    const [accessToken, refreshToken] = await this.processUserLogin(email, password, useProxy);
+    if (accessToken && refreshToken) {
+      const tasks = [
+        this.processRefreshingToken(email, password, useProxy),
+        this.processUserEarning(email, useProxy),
+        this.processSendPing(email, useProxy),
+      ];
+      await Promise.all(tasks);
+    }
+  }
+
+  async main() {
+    try {
+      const accounts = await this.loadAccounts();
+      if (!accounts.length) {
+        this.log(`${chalk.redBright('未加载任何账户。')}`);
+        return;
+      }
+
+      const useProxyChoice = await this.printQuestion();
+      const useProxy = [1, 2].includes(useProxyChoice);
+
+      this.clearTerminal();
+      this.welcome();
+      this.log(
+        `${chalk.greenBright('账户总数：')}${chalk.whiteBright(accounts.length)}`
+      );
+
+      if (useProxy) {
+        await this.loadProxies(useProxyChoice);
+      }
+
+      this.log(`${chalk.cyanBright('-').repeat(75)}`);
+
+      while (true) {
+        const tasks = accounts
+          .filter((account) => account && account.Email && account.Password && account.Email.includes('@'))
+          .map((account) =>
+            this.processAccounts(account.Email, account.Password, useProxy)
+          );
+        await Promise.all(tasks);
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+      }
+    } catch (error) {
+      this.log(`${chalk.redBright(`错误：${error.message}`)}`);
+      throw error;
+    }
+  }
 }
+
+(async () => {
+  try {
+    const bot = new Stork();
+    await bot.main();
+  } catch (error) {
+    console.log(
+      `${chalk.cyanBright(`[ ${moment().tz(wib).format('MM/DD/YY HH:mm:ss z')} ]`)}${chalk.whiteBright(
+        ' | '
+      )}${chalk.redBright('[ 退出 ] Stork - 机器人')}`
+    );
+  }
+})();
