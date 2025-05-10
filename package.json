@@ -1,39 +1,18 @@
 {
-  "type":"module",
-  "name": "stork-auto-bot",
+  "name": "stork-bot",
   "version": "1.0.0",
-  "description": "Automated validation bot for Stork Oracle network",
+  "description": "Stork Bot for auto ping",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/airdropinsiders/Stork-Auto-Bot.git"
-  },
-  "keywords": [
-    "stork",
-    "oracle",
-    "validation",
-    "bot",
-    "automation"
-  ],
-  "author": "Airdrop Insiders",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/airdropinsiders/Stork-Auto-Bot/issues"
-  },
-  "homepage": "https://github.com/airdropinsiders/Stork-Auto-Bot#readme",
   "dependencies": {
-    "amazon-cognito-identity-js": "^6.3.1",
-    "axios": "^1.6.2",
-    "fs": "0.0.1-security",
-    "https-proxy-agent": "^7.0.2",
-    "path": "^0.12.7",
-    "socks-proxy-agent": "^8.0.1"
+    "axios": "^1.7.2",
+    "chalk": "^4.1.2",
+    "https-proxy-agent": "^7.0.5",
+    "moment-timezone": "^0.5.45",
+    "socks-proxy-agent": "^8.0.4"
   },
-  "engines": {
-    "node": ">=14.0.0"
-  }
+  "author": "",
+  "license": "ISC"
 }
