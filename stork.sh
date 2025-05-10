@@ -51,19 +51,6 @@ function install_dependencies() {
     echo "环境依赖检测完成！"
 }
 
-# 查看运行的 stork 节点
-function list_stork_sessions() {
-    clear
-    echo "当前运行的 stork 节点会话："
-    screen -ls | grep stork || echo "没有运行中的 stork 节点"
-    echo ""
-    echo "操作提示："
-    echo "- 查看某个节点日志：screen -r <session_name> (如 screen -r stork_1)"
-    echo "- 退出 screen 会话：按 Ctrl+A 然后按 D (detach)，或输入 exit 终止"
-    read -n 1 -s -r -p "按任意键返回主菜单..."
-    main_menu
-}
-
 # 部署 stork 节点
 function deploy_stork_node() {
     install_dependencies
