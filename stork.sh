@@ -13,15 +13,13 @@ function main_menu() {
         echo "退出脚本，请按键盘 Ctrl + C 退出即可"
         echo "请选择要执行的操作:"
         echo "1. 部署 stork 节点"
-        echo "2. 查看运行的 stork 节点"
-        echo "3. 退出脚本"
+        echo "2. 退出脚本"
         echo "================================================================"
-        read -p "请输入选择 (1/2/3): " choice
+        read -p "请输入选择 (1/2): " choice
 
         case $choice in
             1) deploy_stork_node ;;
-            2) list_stork_sessions ;;
-            3) exit ;;
+            2) exit ;;
             *) echo "无效选择，请重新输入！"; sleep 2 ;;
         esac
     done
