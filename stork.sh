@@ -55,33 +55,16 @@ function install_dependencies() {
 function deploy_stork_node() {
     install_dependencies
 
-    # 提示用户输入节点编号，确保不重复
-    while true; do
-        read -p "请输入节点编号（唯一标识，如 1, 2, 3...）： " node_id
-        if [[ -z "$node_id" ]]; then
-            echo "节点编号不能为空！"
-        elif [[ ! "$node_id" =~ ^[0-9]+$ ]]; then
-            echo "节点编号必须是数字！"
-        elif screen -ls | grep -q "stork_$node_id"; then
-            echo "节点编号 $node_id 已存在，请选择其他编号！"
-        else
-            break
-        fi
-    done
-
-    # 创建节点目录
-    node_dir="$HOME/stork_node_$node_id"
-    echo "正在为节点 $node_id 创建目录 $node_dir..."
+    # 检查 stork 目录和 screen -r stork 是否存在，存在则清理
+    node_dir="$HOME/stork"
+    echo "正在检查 stork 目录和 screen 会话..."
     if [ -d "$node_dir" ]; then
-        read -p "目录 $node_dir 已存在，是否删除并重新创建？(y/n) " delete_old
-        if [[ "$delete_old" =~ ^[Yy]$ ]]; then
-            rm -rf "$node_dir"
-        else
-            echo "使用现有目录"
-            read -n 1 -s -r -p "按任意键返回主菜单..."
-            main_menu
-            return
-        fi
+        echo "检测到 stork 目录存在，正在清理..."
+        rm -rf "$node_dir"
+    fi
+    if screen -ls | grep -q "stork"; then
+        echo "检测到 stork screen 会话存在，正在清理..."
+        screen -S stork -X quit
     fi
 
     # 拉取 stork 仓库
@@ -131,9 +114,9 @@ function deploy_stork_node() {
     npm install
 
     # 启动节点
-    screen -S "stork_$node_id" -dm bash -c "cd $node_dir && npm start"
+    screen -S "stork" -dm bash -c "cd $node_dir && npm start"
 
-    echo "节点 $node_id 已启动，使用 'screen -r stork_$node_id' 查看日志"
+    echo "节点已启动，使用 'screen -r stork' 查看日志"
 
     # 提示用户按任意键返回主菜单
     read -n 1 -s -r -p "按任意键返回主菜单..."
