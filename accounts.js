@@ -1,3 +1,6 @@
-export const accounts = [
-  { username: "", password: "" },
-];
+[   
+    {
+        "Email": "xxxx",
+        "Password": "xxxx"
+    }
+]
