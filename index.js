@@ -5,7 +5,6 @@ const moment = require('moment-timezone');
 const chalk = require('chalk');
 const fs = require('fs').promises;
 const os = require('os');
-const readline = require('readline');
 
 const wib = 'Asia/Jakarta';
 
@@ -71,32 +70,23 @@ class Stork {
     }
   }
 
-  async loadProxies(useProxyChoice) {
+  async loadProxies() {
     const filename = 'proxy.txt';
     try {
-      if (useProxyChoice === 1) {
-        const response = await axios.get(
-          'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/all.txt',
-          { timeout: 30000 }
-        );
-        await fs.writeFile(filename, response.data);
-        this.proxies = response.data.split('\n').filter((line) => line.trim());
-      } else {
-        const data = await fs.readFile(filename, 'utf8');
-        this.proxies = data.split('\n').filter((line) => line.trim());
-      }
-
+      const data = await fs.readFile(filename, 'utf8');
+      this.proxies = data.split('\n').filter((line) => line.trim());
       if (!this.proxies.length) {
-        this.log(`${chalk.redBright('未找到代理。')}`);
-        return;
+        this.log(`${chalk.redBright('未找到代理，将不使用代理运行。')}`);
+        return false;
       }
-
       this.log(
         `${chalk.greenBright('代理总数：')}${chalk.whiteBright(this.proxies.length)}`
       );
+      return true;
     } catch (error) {
-      this.log(`${chalk.redBright(`加载代理失败：${error.message}`)}`);
+      this.log(`${chalk.redBright(`加载代理失败，将不使用代理运行：${error.message}`)}`);
       this.proxies = [];
+      return false;
     }
   }
 
@@ -140,47 +130,6 @@ class Stork {
         ' - '
       )}${chalk.cyanBright('状态：')}${color(message)}`
     );
-  }
-
-  async printQuestion() {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    const question = (query) =>
-      new Promise((resolve) => rl.question(query, (answer) => resolve(answer)));
-
-    while (true) {
-      console.log('1. 使用 Monosans 代理运行');
-      console.log('2. 使用私有代理运行');
-      console.log('3. 不使用代理运行');
-      try {
-        const choose = parseInt(
-          await question('选择 [1/2/3] -> '),
-          10
-        );
-        if ([1, 2, 3].includes(choose)) {
-          const proxyType =
-            choose === 1
-              ? '使用 Monosans 代理运行'
-              : choose === 2
-              ? '使用私有代理运行'
-              : '不使用代理运行';
-          console.log(`${chalk.greenBright(`${proxyType} 已选择。`)}`);
-          rl.close();
-          return choose;
-        } else {
-          console.log(
-            `${chalk.redBright('请输入 1、2 或 3。')}`
-          );
-        }
-      } catch {
-        console.log(
-          `${chalk.redBright('输入无效，请输入数字（1、2 或 3）。')}`
-        );
-      }
-    }
   }
 
   async userLogin(email, password, proxy, retries = 5) {
@@ -506,18 +455,13 @@ class Stork {
         return;
       }
 
-      const useProxyChoice = await this.printQuestion();
-      const useProxy = [1, 2].includes(useProxyChoice);
-
       this.clearTerminal();
       this.welcome();
       this.log(
         `${chalk.greenBright('账户总数：')}${chalk.whiteBright(accounts.length)}`
       );
 
-      if (useProxy) {
-        await this.loadProxies(useProxyChoice);
-      }
+      const useProxy = await this.loadProxies();
 
       this.log(`${chalk.cyanBright('-').repeat(75)}`);
 
